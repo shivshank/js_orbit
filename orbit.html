@@ -37,16 +37,25 @@
         </div>
 
         <script src="node_modules/three/build/three.js"></script>
-
         <script src="node_modules/three/examples/js/controls/OrbitControls.js"></script>
+
+        <script src="simulate.js"></script>
 
         <script>
             // adapted from orbit example
 
-            var camera, controls, scene, renderer;
+            var camera, controls, scene, renderer, clock, accum;
+            // handle for accessing scene objects from global scope
+            var rd;
+
             init();
             animate();
             function init() {
+                // start a clock
+                clock = new THREE.Clock();
+                // this is "unsimulated" time we accumulate
+                accum = 0;
+
                 scene = new THREE.Scene();
                 scene.background = new THREE.Color( 0x0 );
                 renderer = new THREE.WebGLRenderer();
@@ -91,20 +100,17 @@
                 scene.add( sun );
 
                 // planet at center
-                var geometry = new THREE.SphereGeometry( 50, 64, 64 );
+                var geometry = new THREE.SphereGeometry( 1, 64, 64 );
                 var material = new THREE.MeshPhongMaterial( { color: 0x4070aa, flatShading: false } );
                 var sphere = new THREE.Mesh( geometry, material );
                 scene.add( sphere );
 
                 // satellite orbiting planet
-                var sat_geo = new THREE.SphereGeometry(10, 16, 16);
+                var sat_geo = new THREE.SphereGeometry(5, 16, 16);
                 var sat_material = new THREE.MeshPhongMaterial( { color: 0xcccc, flatShading: true } );
+                // sat_material.depthTest = false;
                 var sat = new THREE.Mesh( sat_geo, sat_material );
-                sat.position.x = 100;
-                sat.position.y = 0;
-                sat.position.z = 50;
-                sat.updateMatrix();
-                sat.matrixAutoUpdate = false;
+                // sat.renderOrder = 100;
                 scene.add( sat );
 
                 // orbit spline (I was originally going to use actual splines but sampling actually
@@ -114,6 +120,9 @@
                 var orbit_mat = new THREE.LineBasicMaterial( { color: 0xffffff, opacity: 1, linewidth: 3} );
                 var orbit_spline = new THREE.Line( orbit_geo, orbit_mat );
                 scene.add(orbit_spline);
+
+                // expose planet, sat, and spline to global scope
+                rd = { planet: sphere, sat, spline: orbit_spline };
 
                 // sun and ambient light
                 var light = new THREE.DirectionalLight( 0xffffff );
@@ -131,6 +140,19 @@
             function animate() {
                 requestAnimationFrame( animate );
                 controls.update(); // required if controls.enableDamping = true, or if controls.autoRotate = true
+                render();
+            }
+            function render() {
+                accum = step_model(accum + clock.getDelta());
+                var scaleFactor = 1 / 60000;
+                // pull in the new data
+                rd.sat.position.copy(model.sat.pos)
+                    .multiplyScalar(scaleFactor);
+                rd.planet.scale.x = model.planet.radius;
+                rd.planet.scale.y = model.planet.radius;
+                rd.planet.scale.z = model.planet.radius;
+                rd.planet.scale.multiplyScalar(scaleFactor);
+
                 renderer.render( scene, camera );
             }
 
