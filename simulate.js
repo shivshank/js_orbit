@@ -19,7 +19,7 @@ var model = {
         // ISS is roughly ~400km away from a planet that has radius 6000km
         pos: new THREE.Vector3(6410000, 0, 0),
         // traveling at ~7,500 m/s
-        vel: new THREE.Vector3(0, 0, 1).normalize().multiplyScalar(8500),
+        vel: new THREE.Vector3(0, -1, 1).normalize().multiplyScalar(8500),
     }
 };
 
