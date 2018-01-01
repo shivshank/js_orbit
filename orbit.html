@@ -46,24 +46,27 @@
         <script src="simulate.js"></script>
 
         <script>
+            'use strict'
             // adapted from orbit example
 
             var camera, controls, scene, renderer, clock, accum;
+            var scaleFactor = 1 / 60000;
             // handle for accessing scene objects from global scope
             var rd;
 
             // we'll be rendering a few orbits:
-            // - TODO: initial kepler orbit (derived from initial position)
+            // - initial kepler orbit (derived from initial position)
             // - TODO: current kepler orbit (derived from current position)
-            // - TODO: current sampled orbit (derived from 4 recent samples to generate an ellipse)
+            // - TODO: current sampled orbit (derived from 5 recent samples to generate an ellipse)
             // - orbit trail (derived from most recent samples)
 
             var orbit_tracker = {
+                // a list of scaled positions
                 samples: [],
                 timeBetweenSamples: 1,
                 timeBeforeNextSample: 0,
                 /// determines how many samples we need to hold onto
-                orbitTrailSamples: 10,
+                orbitTrailSamples: 200,
             };
             orbit_tracker.step = function(dt) {
                 this.timeBeforeNextSample -= dt;
@@ -76,7 +79,7 @@
                 if (this.timeBeforeNextSample > this.timeBetweenSamples * 10) {
                     this.timeBeforeNextSample = this.timeBetweenSamples;
                 }
-                this.samples.push(model.sat.pos.clone().multiplyScalar(1 / 60000));
+                this.samples.push(model.sat.pos.clone().multiplyScalar(scaleFactor));
                 // we could speed this up with a better data structure if necessary
                 if (this.samples.length > Math.max(this.orbitTrailSamples, 4)) {
                     this.samples.splice(0, 1);
@@ -88,7 +91,7 @@
             // I can't figure out if you can resize a THREE.Geometry buffer. We can probably do it
             // better with a BufferGeometry via pre-allocating and setDrawRange.
             for (let i=0; i < orbit_tracker.orbitTrailSamples; i+=1) {
-                orbit_tracker.samples.push(new THREE.Vector3(0, 0, 0));
+                orbit_tracker.samples.push(model.sat.pos.clone().multiplyScalar(scaleFactor));
             }
 
             init();
@@ -112,7 +115,7 @@
                 // enable animation loop when using damping or autorotation
                 //controls.enableDamping = true;
                 //controls.dampingFactor = 0.25;
-                controls.enableZoom = false;
+                controls.enableZoom = true;
 
                 // background (will load in asynchronously; is only thing that "needs" a texture)
                 var texLoader = new THREE.TextureLoader();
@@ -156,22 +159,63 @@
                 // sat.renderOrder = 100;
                 scene.add( sat );
 
-                // orbit spline (I was originally going to use actual splines but sampling actually
-                // gives a good enough result!)
-                /*(var orbit_geo = new THREE.Geometry();
-                orbit_geo.vertices = sampled_ellipse();
-                var orbit_mat = new THREE.LineBasicMaterial( { color: 0xffffff, opacity: 1, linewidth: 3} );
-                var orbit_spline = new THREE.Line( orbit_geo, orbit_mat );
-                scene.add(orbit_spline);*/
-
                 // trail object
                 var trail_geo = new THREE.Geometry();
                 trail_geo.vertices = orbit_tracker.samples;
-                var trail_mat = new THREE.LineBasicMaterial( { color: 0xff0000, opacity: 1, linewidth: 3 } );
+                var trail_mat = new THREE.LineBasicMaterial( { color: 0xff00ff, opacity: 1, linewidth: 3 } );
                 var trail = new THREE.Line(trail_geo, trail_mat);
                 scene.add(trail);
 
+                // initial orbit
+                var kepler_orbit = calculate_kepler_orbit(model.planet, model.sat);
+                var origin_vec = new THREE.Vector3(0, 0, 0);
+                console.log(kepler_orbit);
+                function addArrow(dir, start, color) {
+                    scene.add(new THREE.ArrowHelper(dir.clone().normalize(), start.clone().multiplyScalar(scaleFactor), dir.length() * scaleFactor, color));
+                }
+
+                // calculated orbit
+                var kepler_trail_geo = new THREE.Geometry();
+                var i;
+                for (i=0; i < 300; i+=1) {
+                    kepler_trail_geo.vertices.push(
+                        kepler_orbit.sample_ellipse( i / 300 * 2 * Math.PI)
+                            .multiplyScalar(scaleFactor)
+                    );
+                }
+                var kepler_trail_mat = new THREE.LineDashedMaterial( {
+                    color: 0x008800,
+                    linewidth: 3,
+                    scale: 2,
+                    dashSize: 3,
+                    gapSize: 5,
+                } );
+                var kepler_trail = new THREE.Line(kepler_trail_geo, kepler_trail_mat);
+                kepler_trail.geometry.computeLineDistances();
+                scene.add(kepler_trail);
+
+                // optionally we can add an arrow pointing from ellipse center to periapsis
+                // addArrow(kepler_orbit.ellipse.major_vector.multiplyScalar(1), kepler_orbit.ellipse.constant, 0xff5500);
+
+                // geometry for visualizing orbit parameters
+                var point_geo = new THREE.SphereGeometry(3, 8, 8);
+
+                var node_mat = new THREE.MeshPhongMaterial( { color: 0x00aa00, flatShading: false } );
+                var peri_mat = new THREE.MeshPhongMaterial( { color: 0x0000ff, flatShading: false } );
+                var apo_mat = new THREE.MeshPhongMaterial( { color: 0xff0000, flatShading: false } );
+
+                var node = new THREE.Mesh(point_geo, node_mat);
+                node.position.copy(kepler_orbit.ascending_node().multiplyScalar(scaleFactor));
+                scene.add(node);
+                var peri = new THREE.Mesh(point_geo, peri_mat);
+                peri.position.copy(kepler_orbit.periapsis().multiplyScalar(scaleFactor));
+                scene.add(peri);
+                var apo = new THREE.Mesh(point_geo, apo_mat);
+                apo.position.copy(kepler_orbit.apoapsis().multiplyScalar(scaleFactor));
+                scene.add(apo);
+
                 // expose planet, sat, and spline to global scope
+                // we don't need to expose the initial orbit stuff since it never changes
                 rd = { planet: sphere, sat, trail };
 
                 // sun and ambient light
@@ -196,7 +240,6 @@
                 var dt = clock.getDelta();
                 accum = step_model(accum + dt);
                 orbit_tracker.step(dt);
-                var scaleFactor = 1 / 60000;
                 // pull in the new data
                 rd.sat.position.copy(model.sat.pos)
                     .multiplyScalar(scaleFactor);
@@ -207,25 +250,6 @@
                 rd.planet.scale.multiplyScalar(scaleFactor);
 
                 renderer.render( scene, camera );
-            }
-
-            // orbital spline
-            function sampled_ellipse() {
-                var out = [];
-                var samples = 100;
-                var step = 2 * Math.PI / samples;
-                var i;
-                var angle;
-                // ellipse parameters
-                var a = 300, b = 150;
-                var x, y;
-                for (i=0; i < samples; i+=1) {
-                    angle = i * step;
-                    x = a * Math.cos(angle);
-                    y = b * Math.sin(angle);
-                    out.push(new THREE.Vector3(x, 0, y));
-                }
-                return out;
             }
         </script>
 
