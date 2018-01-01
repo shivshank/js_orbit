@@ -10,7 +10,7 @@
                 color: #000;
                 font-family:Monospace;
                 font-size:13px;
-                text-align:center;
+                text-align:left;
                 font-weight: bold;
                 background-color: #fff;
                 margin: 0px;
@@ -19,7 +19,9 @@
             #info {
                 color:#000;
                 position: absolute;
-                top: 0px; width: 100%;
+                top: 10px; width: 100%;
+                left: 10px;
+                width: 500px;
                 padding: 5px;
                 background: #fff;
                 border-radius: 5px;
@@ -33,7 +35,9 @@
     <body>
         <div id="container"></div>
         <div id="info">
-            Kepler Orbit derivation from initial pos and vel - Not to scale in any way whatsoever!
+            <p>Kepler orbit simulation of an ISS like object around an Earth like planet.</p>
+            <p>ISS size, sun, and milky way background are not to scale. The planet and the 
+            satellite's altitude are to scale, however, specifically 1m:60km.</p>
         </div>
 
         <script src="node_modules/three/build/three.js"></script>
@@ -47,6 +51,45 @@
             var camera, controls, scene, renderer, clock, accum;
             // handle for accessing scene objects from global scope
             var rd;
+
+            // we'll be rendering a few orbits:
+            // - TODO: initial kepler orbit (derived from initial position)
+            // - TODO: current kepler orbit (derived from current position)
+            // - TODO: current sampled orbit (derived from 4 recent samples to generate an ellipse)
+            // - orbit trail (derived from most recent samples)
+
+            var orbit_tracker = {
+                samples: [],
+                timeBetweenSamples: 1,
+                timeBeforeNextSample: 0,
+                /// determines how many samples we need to hold onto
+                orbitTrailSamples: 10,
+            };
+            orbit_tracker.step = function(dt) {
+                this.timeBeforeNextSample -= dt;
+                if (this.timeBeforeNextSample > 0) {
+                    return;
+                }
+                this.timeBeforeNextSample = this.timeBetweenSamples 
+                    + Math.abs(this.timeBeforeNextSample);
+                // put a cap on how long we will wait (in case there is huge lag)
+                if (this.timeBeforeNextSample > this.timeBetweenSamples * 10) {
+                    this.timeBeforeNextSample = this.timeBetweenSamples;
+                }
+                this.samples.push(model.sat.pos.clone().multiplyScalar(1 / 60000));
+                // we could speed this up with a better data structure if necessary
+                if (this.samples.length > Math.max(this.orbitTrailSamples, 4)) {
+                    this.samples.splice(0, 1);
+                }
+                // make sure the geometry buffer actually reuploads to the GPU
+                rd.trail.geometry.verticesNeedUpdate = true;
+            };
+
+            // I can't figure out if you can resize a THREE.Geometry buffer. We can probably do it
+            // better with a BufferGeometry via pre-allocating and setDrawRange.
+            for (let i=0; i < orbit_tracker.orbitTrailSamples; i+=1) {
+                orbit_tracker.samples.push(new THREE.Vector3(0, 0, 0));
+            }
 
             init();
             animate();
@@ -80,7 +123,7 @@
                 texLoader.load('https://cdn.eso.org/images/screen/eso0932a.jpg', function (texture) {
                     var bg_mat = new THREE.MeshBasicMaterial({
                         map: texture,
-                        shading: THREE.FlatShading,
+                        flatShading: false,
                         side: THREE.BackSide
                     });
 
@@ -115,14 +158,21 @@
 
                 // orbit spline (I was originally going to use actual splines but sampling actually
                 // gives a good enough result!)
-                var orbit_geo = new THREE.Geometry();
+                /*(var orbit_geo = new THREE.Geometry();
                 orbit_geo.vertices = sampled_ellipse();
                 var orbit_mat = new THREE.LineBasicMaterial( { color: 0xffffff, opacity: 1, linewidth: 3} );
                 var orbit_spline = new THREE.Line( orbit_geo, orbit_mat );
-                scene.add(orbit_spline);
+                scene.add(orbit_spline);*/
+
+                // trail object
+                var trail_geo = new THREE.Geometry();
+                trail_geo.vertices = orbit_tracker.samples;
+                var trail_mat = new THREE.LineBasicMaterial( { color: 0xff0000, opacity: 1, linewidth: 3 } );
+                var trail = new THREE.Line(trail_geo, trail_mat);
+                scene.add(trail);
 
                 // expose planet, sat, and spline to global scope
-                rd = { planet: sphere, sat, spline: orbit_spline };
+                rd = { planet: sphere, sat, trail };
 
                 // sun and ambient light
                 var light = new THREE.DirectionalLight( 0xffffff );
@@ -143,11 +193,14 @@
                 render();
             }
             function render() {
-                accum = step_model(accum + clock.getDelta());
+                var dt = clock.getDelta();
+                accum = step_model(accum + dt);
+                orbit_tracker.step(dt);
                 var scaleFactor = 1 / 60000;
                 // pull in the new data
                 rd.sat.position.copy(model.sat.pos)
                     .multiplyScalar(scaleFactor);
+                // no reason to do this every frame but it also probably doesn't hurt
                 rd.planet.scale.x = model.planet.radius;
                 rd.planet.scale.y = model.planet.radius;
                 rd.planet.scale.z = model.planet.radius;
